@@ -5,6 +5,9 @@
  * 请求（主要是 /api/*）才会进入这里。
  */
 
+// ESA 支持 process API，但不会像完整 Node.js 一样把 process 注入全局作用域。
+import process from 'node:process';
+
 const DASHSCOPE_KEY = process.env.DASHSCOPE_KEY || '';
 const DASHSCOPE_BASE_URL = process.env.DASHSCOPE_BASE_URL ||
   'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions';
