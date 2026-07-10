@@ -38,7 +38,7 @@
 要求：Node.js 20 或更高版本。
 
 ```bash
-git clone <your-repo-url> shy_AI-Cartoon-Chat
+git clone https://github.com/shallowsingaa/shy_AI-Cartoon-Chat
 cd shy_AI-Cartoon-Chat
 cp .env.example .env
 node server.js
