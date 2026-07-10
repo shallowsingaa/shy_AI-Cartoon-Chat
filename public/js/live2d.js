@@ -65,6 +65,7 @@
   };
 
   const MODEL_KEY = 'yumi_model_select';
+  const IS_MOBILE = window.matchMedia('(max-width: 768px), (pointer: coarse)').matches;
   let currentModelId = 'yumi';
   try { const s = localStorage.getItem(MODEL_KEY); if (s && MODEL_CONFIGS[s]) currentModelId = s; } catch (e) { /* 忽略 */ }
   let currentConfig = MODEL_CONFIGS[currentModelId];
@@ -88,7 +89,9 @@
   const faceState = { mouth: null, eyes: null, deco: [] };
 
   let app = null, model = null, lipSyncOn = false, tickerFn = null;
-  let resetTimer = null, swingOn = false, swingTicker = null, loadingModel = false;
+  let resetTimer = null, swingOn = false, swingTicker = null;
+  let loadGeneration = 0;
+  let resizeFrame = 0;
 
   // ===== 位置 / 缩放 =====
   function loadPos() {
@@ -244,7 +247,15 @@
       }
     } catch (e) { /* 模型无该参数则忽略 */ }
   }
-  function setSway(on) { swayOn = !!on; try { localStorage.setItem(SWAY_KEY, swayOn ? '1' : '0'); } catch (e) {} applyActions(); }
+  function setSway(on) {
+    swayOn = !!on;
+    try { localStorage.setItem(SWAY_KEY, swayOn ? '1' : '0'); } catch (e) {}
+    applyActions();
+    if (app) {
+      app.ticker.remove(applyPersistentState);
+      if (currentConfig.face || swayOn) app.ticker.add(applyPersistentState);
+    }
+  }
   function getActions() { return { sway: swayOn }; }
 
   // ===== 动作播放（按当前模型的 actions 映射）=====
@@ -329,22 +340,58 @@
 
   function showFallback(msg) {
     const c = document.getElementById('live2d-canvas');
-    if (c) c.innerHTML = '<div class="model-fallback">' + (msg || '模型加载失败') + '</div>';
+    if (!c) return;
+    c.classList.remove('is-loading');
+    c.replaceChildren();
+    const fallback = document.createElement('div');
+    fallback.className = 'model-fallback';
+    fallback.textContent = msg || '模型加载失败';
+    c.appendChild(fallback);
+  }
+
+  function destroyApplication(targetApp) {
+    if (!targetApp) return;
+    try {
+      targetApp.destroy(true, { children: true, texture: true, baseTexture: true });
+    } catch (e) { /* 忽略已释放的 WebGL 资源 */ }
+  }
+
+  function applyPersistentState() {
+    if (!model) return;
+    if (currentConfig.face && currentConfig.face.hair) applyHair();
+    if (currentConfig.face) applyFace();
+    if (swayOn) applyActions();
+  }
+
+  function syncTickerState() {
+    if (!app) return;
+    if (document.hidden) app.ticker.stop();
+    else app.ticker.start();
   }
 
   // ===== 加载 / 切换模型 =====
   async function loadModel() {
     const container = document.getElementById('live2d-canvas');
     if (!container) return;
-    if (loadingModel) return;
-    loadingModel = true;
-
+    const generation = ++loadGeneration;
     // 清理旧实例
-    if (app) {
-      try { app.destroy(true, { children: true, texture: false, baseTexture: false }); } catch (e) { /* 忽略 */ }
-      app = null; model = null;
-    }
-    container.innerHTML = '<div class="model-loading">' + (currentConfig.name) + ' 正在登场…</div>';
+    const previousApp = app;
+    if (resetTimer) { clearTimeout(resetTimer); resetTimer = null; }
+    if (previousApp && tickerFn) previousApp.ticker.remove(tickerFn);
+    if (previousApp && swingTicker) previousApp.ticker.remove(swingTicker);
+    tickerFn = null;
+    swingTicker = null;
+    lipSyncOn = false;
+    swingOn = false;
+    app = null;
+    model = null;
+    destroyApplication(previousApp);
+    container.classList.add('is-loading');
+    container.replaceChildren();
+    const loading = document.createElement('div');
+    loading.className = 'model-loading';
+    loading.textContent = currentConfig.name + ' 正在登场…';
+    container.appendChild(loading);
 
     if (typeof PIXI === 'undefined' || !PIXI.live2d) {
       showFallback('Live2D 库未加载（请检查网络后刷新）');
@@ -352,41 +399,53 @@
       return;
     }
 
-    app = new PIXI.Application({
+    const nextApp = new PIXI.Application({
       view: document.createElement('canvas'),
       width: container.clientWidth,
       height: container.clientHeight,
       transparent: true,
       autoDensity: true,
-      antialias: true,
-      resolution: Math.min(window.devicePixelRatio || 1, 2),
+      antialias: !IS_MOBILE,
+      resolution: Math.min(window.devicePixelRatio || 1, IS_MOBILE ? 1 : 1.5),
     });
-    container.appendChild(app.view);
+    nextApp.ticker.maxFPS = IS_MOBILE ? 30 : 45;
+    container.appendChild(nextApp.view);
 
+    let nextModel;
     try {
-      model = await PIXI.live2d.Live2DModel.from(currentConfig.modelUrl, { autoInteract: false });
+      nextModel = await PIXI.live2d.Live2DModel.from(currentConfig.modelUrl, { autoInteract: false });
     } catch (e) {
+      destroyApplication(nextApp);
+      if (generation !== loadGeneration) return;
       console.error('[Live2D] 加载失败:', e);
       showFallback('模型加载失败：' + (e && e.message ? e.message : e));
-      loadingModel = false;
       return;
     }
 
+    if (generation !== loadGeneration) {
+      try { nextModel.destroy({ children: true, texture: true, baseTexture: true }); } catch (e) { /* ignore */ }
+      destroyApplication(nextApp);
+      return;
+    }
+
+    app = nextApp;
+    model = nextModel;
+
     fitModel(container);
     app.stage.addChild(model);
-    const loading = container.querySelector('.model-loading');
-    if (loading) loading.remove();
+    container.classList.remove('is-loading');
+    const loadingEl = container.querySelector('.model-loading');
+    if (loadingEl) loadingEl.remove();
 
     window.YumiLive2D.ready = true;
-    // 每帧应用发型/表情/摇摆，确保不被动作覆盖
-    if (currentConfig.face && currentConfig.face.hair) { app.ticker.add(applyHair); applyHair(); }
-    if (currentConfig.face) { app.ticker.add(applyFace); applyFace(); }
-    app.ticker.add(applyActions); applyActions();
+    // Cubism 动作可能覆盖自定义参数，因此用一个合并后的低频率 ticker 维持状态。
+    if (currentConfig.face || swayOn) app.ticker.add(applyPersistentState);
+    applyPersistentState();
+    syncTickerState();
 
     console.log('[Live2D] 模型加载完成：' + currentConfig.name);
     document.dispatchEvent(new Event('yumi-ready'));
     document.dispatchEvent(new Event('yumi-model-changed'));
-    loadingModel = false;
   }
 
   function resetPerModelState() {
@@ -429,16 +488,28 @@
 
   function onResize() {
     if (!app || !model) return;
-    const container = document.getElementById('live2d-canvas');
-    app.renderer.resize(container.clientWidth, container.clientHeight);
-    fitModel(container);
+    if (resizeFrame) cancelAnimationFrame(resizeFrame);
+    resizeFrame = requestAnimationFrame(function () {
+      resizeFrame = 0;
+      if (!app || !model) return;
+      const container = document.getElementById('live2d-canvas');
+      app.renderer.resize(container.clientWidth, container.clientHeight);
+      fitModel(container);
+    });
   }
-  window.addEventListener('resize', onResize);
+  window.addEventListener('resize', onResize, { passive: true });
+  document.addEventListener('visibilitychange', syncTickerState);
+
+  function scheduleInitialLoad() {
+    applyTheme();
+    const run = function () { loadModel(); };
+    if ('requestIdleCallback' in window) window.requestIdleCallback(run, { timeout: 700 });
+    else setTimeout(run, 80);
+  }
 
   if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', function () { applyTheme(); loadModel(); });
+    document.addEventListener('DOMContentLoaded', scheduleInitialLoad);
   } else {
-    applyTheme();
-    loadModel();
+    scheduleInitialLoad();
   }
 })();

@@ -1,269 +1,160 @@
-# Yumi 的小窝 · 少女风 Live2D 聊天网站
+# Yumi 的小窝
 
-> 一个零依赖、原生 Node.js 实现的 Live2D 虚拟主播聊天网站。
-> 内置 **Yumi（温柔少女）** 与 **诺亚（酷拽少年正太）** 两个角色，
-> 接入阿里云百炼 **Qwen** 大模型生成对话，并支持 **MiniMax TTS** 实时语音朗读、口型同步。
+面向中国大陆用户的轻量 Live2D AI 聊天网站。项目内置 Yumi 与诺亚两个角色，通过阿里云百炼 Qwen 生成对话，并可选使用 MiniMax TTS 朗读回复。
 
-![tech](https://img.shields.io/badge/node-%E2%89%A512-339933?logo=node.js&logoColor=white)
-![stack](https://img.shields.io/badge/stack-vanilla%20JS%20%2B%20Node%20http-ffe066)
-![license](https://img.shields.io/badge/private-1.0.0-blueviolet)
-![live2d](https://img.shields.io/badge/Live2D-Cubism%203-ff8fb1)
+项目采用原生 HTML、CSS、JavaScript 与 Node.js 内置模块，不需要安装 npm 依赖。PixiJS、Cubism Core 和 pixi-live2d-display 已固定版本并随站点本地托管，浏览器运行时不依赖 Google Fonts、jsDelivr 等境外资源。
 
----
+## 功能与优化
 
-## ✨ 功能一览
+- 双角色 Live2D 展示、表情、动作、位置和缩放控制。
+- 每个角色独立的会话历史、人设和 TTS 音色。
+- 移动端上下分区布局，适配安全区、短屏、触控热区与横向表情栏。
+- 移动端使用 1× 画布和最高 30 FPS，桌面端最高 1.5×/45 FPS；页面进入后台时暂停 ticker。
+- 角色切换会释放旧 WebGL 纹理，避免多次切换后显存持续增长。
+- Live2D 纹理由 8192×8192 优化为 4096×4096，两张纹理合计约 7 MiB。
+- Node 静态服务支持 Brotli/Gzip、ETag、HEAD、分级缓存和基础安全响应头。
+- 对话和 TTS 具备请求体限制、客户端/服务端超时及并发保护。
+- 移动端默认关闭 TTS 以节省流量和调用费用；用户开启后会记住偏好。
 
-| 模块 | 说明 |
-| --- | --- |
-| 🎀 Live2D 看板娘 | 二次元角色 Yumi / 诺亚，支持鼠标跟踪、点击交互、表情/动作切换 |
-| 💬 智能对话 | 通过 `/api/chat` 代理到阿里云百炼 Qwen（`qwen-plus`），响应中带 `mood` + `action` |
-| 🎙 语音朗读（TTS） | 可选启用 MiniMax `speech-02-turbo`，MP3 流式返回，前端 `<audio>` 播放并口型同步 |
-| 😶 多情绪表达 | `happy / sad / angry / shy / surprised / thinking / neutral` 七种情绪驱动 Live2D 表情 |
-| 🎬 动作触发 | `wave / tear / sweat / none` 四种动作，由模型返回 JSON 自动触发 |
-| 🧠 多模型切换 | 前端可在 Yumi 与诺亚之间一键切换；每个角色独立人设与音色 |
-| 💾 本地记忆 | 聊天历史自动写入 `localStorage`，刷新不丢失 |
-| 🌸 装饰层 | 飘动云朵、蝴蝶结、星星；诺亚主题切到闪电 + 蓝色爱心 |
-| ⏳ 主动搭话 | 长时间无对话时，角色会主动发起闲聊 |
-| 🔒 零外泄 | 所有 LLM / TTS Key 仅存在于服务端 `.env`，前端不暴露任何凭证 |
+## 架构
 
----
-
-## 📂 目录结构
-
-```
-.
-├─ server.js              # Node.js 静态服务 + /api/chat、/api/tts、/api/tts/status
-├─ package.json           # 仅声明启动脚本，无第三方依赖
-├─ .env.example           # 环境变量样例（提交，勿填真实值）
-├─ .env                   # 本地真实配置（已被 .gitignore 忽略）
-├─ public/
-│  ├─ index.html          # 单页应用入口
-│  ├─ css/style.css       # 主题样式（少女粉 / 诺亚蓝紫）
-│  ├─ js/
-│  │  ├─ live2d.js        # Live2D Cubism 3 渲染封装（表情/动作/口型）
-│  │  └─ app.js           # 聊天 / TTS / 历史 / 主动搭话 业务逻辑
-│  └─ model/
-│     ├─ yumi/            # Yumi 模型（.moc3 / .cdi3.json / .physics3.json …）
-│     └─ no4/             # 诺亚模型
-└─ _tmp_unzip/            # 临时解压目录（已在 .gitignore）
+```text
+浏览器 public/
+  ├─ /api/chat ──> Node server.js 或 ESA esa-function.js ──> 阿里云百炼
+  ├─ /api/tts  ──> Node server.js 或 ESA esa-function.js ──> MiniMax
+  └─ /model/*、/vendor/* ──> 同源静态资源
 ```
 
----
+- `server.js`：本地或普通服务器入口，负责静态文件与三个 API。
+- `esa-function.js`：阿里云 ESA Pages 边缘函数入口，只处理 `/api/*`。
+- `build-esa-env.cjs`：构建时把允许的 ESA 环境变量写入函数侧生成文件；生成文件不会发布到 `public/`。
+- `public/js/live2d.js`：模型生命周期、渲染、表情、动作和口型。
+- `public/js/app.js`：聊天、会话历史、TTS、角色切换和 UI 状态。
+- `public/vendor/`：固定版本的浏览器运行库，本地托管以改善大陆网络可用性。
+- `test/server.test.js`：Node 内置测试，覆盖静态服务和输入边界。
 
-## 🚀 快速开始
+## 快速开始
 
-### 环境要求
-
-- **Node.js ≥ 12**（仅使用内置 `http / fs / path / url` 模块，无第三方依赖）
-- 一个能访问公网的浏览器（用于调用 Qwen / MiniMax 接口）
-
-### 1. 克隆与安装
+要求：Node.js 20 或更高版本。
 
 ```bash
 git clone <your-repo-url> shy_AI-Cartoon-Chat
 cd shy_AI-Cartoon-Chat
-```
-
-> 本项目**不需要** `npm install`，零依赖。
-
-### 2. 配置环境变量
-
-```bash
 cp .env.example .env
-```
-
-编辑 `.env`，填入真实 Key：
-
-```ini
-# 阿里云百炼（Qwen）
-DASHSCOPE_KEY=sk-xxxxxxxxxxxxxxxxxxxxxxxx
-DASHSCOPE_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions
-MODEL=qwen-plus
-PORT=3000
-
-# MiniMax TTS（不配则自动禁用语音朗读，文字聊天照常工作）
-MINIMAX_API_KEY=eyJxxxxxxxxxxxxxxxx
-MINIMAX_GROUP_ID=
-MINIMAX_TTS_BASE_URL=https://api.minimax.chat/v1/t2a_v2
-MINIMAX_TTS_MODEL=speech-02-turbo
-MINIMAX_VOICE_ID=female-tianmei
-MINIMAX_TTS_SPEED=1.0
-MINIMAX_TTS_PITCH=0
-```
-
-### 3. 启动服务
-
-```bash
 node server.js
-# 或
-npm start
 ```
 
-终端打印 `✨ Yumi 聊天网站已启动： http://localhost:3000` 后，浏览器访问 [http://localhost:3000](http://localhost:3000) 即可。
+Windows PowerShell 可使用：
 
-> 修改 `.env` 后需要重启服务才会生效。
+```powershell
+Copy-Item .env.example .env
+node server.js
+```
 
-### 部署到阿里云 ESA Pages
+浏览器访问 [http://localhost:3000](http://localhost:3000)。项目没有第三方 npm 依赖，因此无需执行 `npm install`。
 
-仓库根目录包含 `esa.jsonc`，从 Git 仓库创建 Pages 时会自动使用以下配置：
+## 环境变量
 
-- 安装命令：留空（项目零依赖）
-- 构建命令：`node build-esa-env.cjs`
-- 根目录：`/`
-- 静态资源目录：`./public`
-- 函数文件路径：`./esa-function.js`
-- Node.js 版本：`20`
-
-在 ESA 控制台配置环境变量，至少需要填写 `DASHSCOPE_KEY`。如需语音功能，再填写
-`MINIMAX_API_KEY` 及相关 MiniMax 配置。ESA 不需要 `PORT`，也不会读取本地 `.env` 文件。
-构建脚本会把控制台变量写入仅供边缘函数打包的配置模块；该模块不位于 `public`，不会
-作为静态资源对外发布。缺少 `DASHSCOPE_KEY` 时构建会直接失败并给出明确错误。
-
-`server.js` 仍用于本地 Node.js 开发；`esa-function.js` 是 ESA 边缘运行时专用入口。
-
----
-
-## 🔑 环境变量说明
-
-| 变量 | 必填 | 默认值 | 说明 |
+| 变量 | 必填 | 默认值 | 用途 |
 | --- | :-: | --- | --- |
-| `DASHSCOPE_KEY` | ✅ | — | 阿里云百炼 API Key，对话功能必需 |
-| `DASHSCOPE_BASE_URL` | ❌ | 兼容模式 Chat Completions | 自定义网关可改 |
-| `MODEL` | ❌ | `qwen-plus` | 使用的 Qwen 模型名 |
-| `PORT` | ❌ | `3000` | HTTP 监听端口 |
-| `MINIMAX_API_KEY` | ❌ | 空 | 不填则禁用 TTS |
-| `MINIMAX_GROUP_ID` | ❌ | 空 | 组织 ID，可在控制台查询 |
-| `MINIMAX_TTS_BASE_URL` | ❌ | `https://api.minimax.chat/v1/t2a_v2` | TTS 端点 |
-| `MINIMAX_TTS_MODEL` | ❌ | `speech-02-turbo` | TTS 模型 |
-| `MINIMAX_VOICE_ID` | ❌ | `female-tianmei` | Yumi 默认音色（甜美女声） |
-| `MINIMAX_VOICE_ID_NO4` | ❌ | `male-qn-qingse-jingpin` | 诺亚默认音色（青涩少年） |
-| `MINIMAX_TTS_SPEED` | ❌ | `1.0` | Yumi 语速 |
-| `MINIMAX_TTS_SPEED_NO4` | ❌ | `1.05` | 诺亚语速 |
-| `MINIMAX_TTS_PITCH` | ❌ | `0` | Yumi 音高 |
-| `MINIMAX_TTS_PITCH_NO4` | ❌ | `2` | 诺亚音高（略高以贴合少年感） |
+| `DASHSCOPE_KEY` | 是 | — | 阿里云百炼 API Key |
+| `DASHSCOPE_BASE_URL` | 否 | 百炼兼容模式端点 | 自定义对话网关 |
+| `MODEL` | 否 | `qwen-plus` | Qwen 模型名 |
+| `PORT` | 否 | `3000` | Node HTTP 端口；ESA 忽略 |
+| `UPSTREAM_TIMEOUT_MS` | 否 | `30000` | 对话和 TTS 上游超时，最小 5000 ms |
+| `CHAT_MAX_CONCURRENCY` | 否 | `24` | 单个 Node 进程/边缘实例的对话并发上限 |
+| `TTS_MAX_CONCURRENCY` | 否 | `6` | 单个 Node 进程/边缘实例的 TTS 并发上限 |
+| `MINIMAX_API_KEY` | 否 | 空 | 留空时禁用 TTS |
+| `MINIMAX_GROUP_ID` | 否 | 空 | MiniMax GroupId |
+| `MINIMAX_TTS_BASE_URL` | 否 | `https://api.minimax.chat/v1/t2a_v2` | MiniMax TTS 端点 |
+| `MINIMAX_TTS_MODEL` | 否 | `speech-02-turbo` | TTS 模型 |
+| `MINIMAX_VOICE_ID` | 否 | `female-tianmei` | Yumi 音色 |
+| `MINIMAX_TTS_SPEED` | 否 | `1.0` | Yumi 语速 |
+| `MINIMAX_TTS_PITCH` | 否 | `0` | Yumi 音高 |
+| `MINIMAX_VOICE_ID_NO4` | 否 | `male-qn-qingse-jingpin` | 诺亚音色 |
+| `MINIMAX_TTS_SPEED_NO4` | 否 | `1.05` | 诺亚语速 |
+| `MINIMAX_TTS_PITCH_NO4` | 否 | `2` | 诺亚音高 |
 
----
+修改 `.env` 后需重启 Node 服务。不要把 `.env` 或真实密钥提交到仓库。
 
-## 🛰 HTTP API
-
-服务启动后，对外暴露三个接口：
+## API
 
 ### `POST /api/chat`
-请求模型生成对话，并按 JSON 解析 `reply / mood / action`。
 
-```jsonc
-// Request
+请求体最大 64 KiB。服务端只保留最近 20 条合法消息，单条内容最多 2000 个字符，并自动注入角色提示词。
+
+```json
 {
-  "model": "yumi",                  // 可选：yumi | no4，默认 yumi
-  "messages": [
-    { "role": "user",      "content": "你好呀" },
-    { "role": "assistant", "content": "嗨～" }
-  ]
+  "model": "yumi",
+  "messages": [{ "role": "user", "content": "你好呀" }]
 }
+```
 
-// Response 200
+```json
 {
-  "reply":  "在的哦～今天有什么想聊的呀？",
-  "mood":   "happy",
+  "reply": "在的哦～今天想聊什么？",
+  "mood": "happy",
   "action": "wave"
 }
 ```
 
-服务端会自动：
-
-- 注入角色专属 `systemPrompt`；
-- 限制最多保留 **最近 20 条** 历史，单条内容截断到 **2000 字**；
-- 兜底 `fallbackReply` 防止模型返回非 JSON 时前端崩。
+`model` 支持 `yumi` 和 `no4`。模型输出无法解析时回退为 `neutral`/`none`。
 
 ### `POST /api/tts`
-把文本转成 MP3 音频流，返回 `audio/mpeg` 二进制。
 
-```jsonc
-// Request
-{ "model": "yumi", "text": "在的哦～" }
-```
-
-未配置 `MINIMAX_API_KEY` 时返回 `{ "enabled": false }`，前端会自动关闭朗读。
+请求体最大 16 KiB，朗读文本最多 500 个字符。成功时返回 `audio/mpeg`；未配置 MiniMax 时返回 `{ "enabled": false }`。
 
 ### `GET /api/tts/status`
-供前端初始化时探测 TTS 是否启用：
 
-```json
-{ "enabled": true, "voiceId": "female-tianmei" }
-```
+返回 TTS 是否可用，供前端初始化开关状态。
 
-其余路径走静态文件托管（`public/`），并对路径做了 `..` 越权检查。
-
----
-
-## 🎭 角色与人设
-
-服务端在 `MODELS` 中集中维护角色配置（`server.js`），切换角色只需在请求里指定 `model`：
-
-| 角色 | id | 性格 | 语气 | 默认 TTS 音色 |
-| --- | --- | --- | --- | --- |
-| Yumi | `yumi` | 温柔可爱、有点害羞 | 甜美亲切、偶尔俏皮 | `female-tianmei` |
-| 诺亚 | `no4` | 少年感正太 | 又酷又有点拽、冷幽默、不卖萌 | `male-qn-qingse-jingpin` |
-
-> 两个角色都强制按 `json_object` 输出，结构：
-> `{"reply": "...", "mood": "...", "action": "..."}`，
-> 前端用这套 JSON 同时驱动气泡、表情和动作。
-
-如需新增角色，只需在 `MODELS` 里加一项 `systemPrompt` 与 `voiceId / voiceSpeed / voicePitch`，
-并在 `public/index.html` 与 `public/js/app.js` 的角色切换器里登记按钮。
-
----
-
-## 🛠 常用脚本
+## 常用命令
 
 ```bash
-# 启动服务
-npm start
-
-# 直接用 Node 启动（推荐用于调试）
-node server.js
-
-# 快速查看服务进程
-curl http://localhost:3000/api/tts/status
+npm start       # 启动 Node 服务
+npm test        # 运行 Node 内置测试
+npm run check   # 语法检查 + 全部测试
+npm run build:esa
 ```
 
----
+PowerShell 执行策略阻止 `npm.ps1` 时，使用 `npm.cmd test` 或 `npm.cmd run check`。
 
-## 🩺 常见问题
+## 部署
 
-**Q1. 启动后访问报 404？**
-确认你是访问 `/`（会自动落到 `public/index.html`），并检查 `public/` 目录完整。
+### 阿里云 ESA Pages
 
-**Q2. 一直提示「服务端未配置 DASHSCOPE_KEY」？**
-检查 `.env` 是否存在、是否被改动过、Key 是否有效；改完 `.env` 需要重启 `node server.js`。
+仓库的 `esa.jsonc` 已配置：
 
-**Q3. TTS 没声音？**
-- 浏览器需允许自动播放（建议先在页面任意点一下，再发送消息）；
-- 打开控制台查看 `/api/tts` 响应，未启用时会返回 `{ "enabled": false }`；
-- `MINIMAX_API_KEY` 或 `MINIMAX_GROUP_ID` 缺失会导致后端拒绝合成。
+- 构建命令：`node build-esa-env.cjs`
+- 静态目录：`./public`
+- 边缘函数：`./esa-function.js`
+- Node.js：20
 
-**Q4. 想换模型或音色？**
-改 `.env` 中 `MODEL` / `MINIMAX_VOICE_ID*` 等字段即可；想给诺亚换男声也可以在 `.env` 里覆盖 `MINIMAX_VOICE_ID_NO4`。
+在 ESA 控制台至少配置 `DASHSCOPE_KEY`。需要语音时再配置 MiniMax 变量。`build-esa-env.cjs` 缺少百炼 Key 时会让构建直接失败，避免部署出无法聊天的站点。
 
-**Q5. 表情/动作没触发？**
-模型必须严格返回 `mood` ∈ 七种枚举、`action` ∈ `wave / tear / sweat / none`。
-若解析失败，前端会回落到 `neutral / none`。
+建议在 ESA 中为 `/model/*` 与 `/vendor/*` 设置至少 7 天边缘缓存；HTML 保持协商缓存。发布前运行 `npm run check`。
 
-**Q6. 端口被占用？**
-在 `.env` 中把 `PORT` 改成其它端口（如 `3001`）再重启。
+### 普通 Node 服务器
 
----
+建议在 Nginx、Caddy 或云负载均衡后运行 `node server.js`，启用 HTTPS，并把进程交给 systemd、PM2 或容器编排管理。Node 服务已经提供静态压缩与 ETag；反向代理若再次压缩，应避免重复压缩。
 
-## 📝 开发备忘
+## 大陆网络与成本说明
 
-- 服务端对所有外部接口均设置了 **1MB / 100KB** 请求体上限，避免被刷；
-- 静态托管做了一次 `path.normalize` 防越权，但仍建议反向代理层再加一道白名单；
-- Live2D Cubism 3 资产请放到 `public/model/<role>/`，文件名需包含 `.model3.json`；
-- 本仓库**未携带**任何 npm 依赖；如未来引入 `npm` 包，请把 `package-lock.json` 一起提交。
+- 首屏没有境外字体或 CDN 依赖，静态资源全部同源。
+- 默认上游为阿里云百炼和 MiniMax，适合中国大陆网络；若改成境外网关，应自行评估跨境延迟与合规要求。
+- 聊天历史只保存在当前标签页的 `sessionStorage`，最多 40 条，不会上传到第三方存储；调用模型时最近历史会发送给配置的模型服务。
+- 主动搭话在每次页面会话中最多触发一次，移动端 TTS 默认关闭，以控制 API 调用和用户流量。
+- 上线面向公众前仍应在网关层增加按 IP/账号的限流、内容安全、日志脱敏与成本告警。当前并发限制只保护单个运行实例，不等同于完整防刷系统。
 
----
+## 维护约束
 
-## 📜 License
+- `server.js` 与 `esa-function.js` 的 API 校验、超时和错误语义应保持一致。
+- 不要重新引入 Google Fonts 或境外运行时 CDN；升级前端库时直接更新 `public/vendor/` 并记录固定版本。
+- Live2D 纹理应保持在 4096 或更低；新增大文件前检查下载体积和解码内存。
+- 新增 npm 依赖时必须提交锁文件，并更新本 README 与 `AGENTS.md`。
 
-仅供个人学习与娱乐使用，**禁止商用**。
-Live2D 模型版权归原作者所有，请勿用于商业分发。
+## 许可
+
+本项目自有代码与文档采用 [Apache License 2.0](LICENSE)。
+
+`public/model/` 中的 Live2D 模型及 `public/vendor/` 中的第三方运行库不因本项目许可证而改变其原有权利归属或授权条件；分发、商用或二次创作前，请分别确认模型作者、PixiJS、pixi-live2d-display 和 Live2D Cubism SDK 的适用条款。

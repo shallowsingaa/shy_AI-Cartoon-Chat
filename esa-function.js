@@ -22,6 +22,13 @@ const MINIMAX_VOICE_ID = ENV.MINIMAX_VOICE_ID || 'female-tianmei';
 const MINIMAX_TTS_SPEED = Number(ENV.MINIMAX_TTS_SPEED || 1.0);
 const MINIMAX_TTS_PITCH = Number(ENV.MINIMAX_TTS_PITCH || 0);
 const TTS_ENABLED = Boolean(MINIMAX_API_KEY);
+const VALID_MOODS = new Set(['happy', 'sad', 'angry', 'shy', 'surprised', 'thinking', 'neutral']);
+const VALID_ACTIONS = new Set(['wave', 'tear', 'sweat', 'none']);
+const UPSTREAM_TIMEOUT_MS = Math.max(5000, Number(ENV.UPSTREAM_TIMEOUT_MS) || 30000);
+const CHAT_MAX_CONCURRENCY = Math.max(1, Number(ENV.CHAT_MAX_CONCURRENCY) || 24);
+const TTS_MAX_CONCURRENCY = Math.max(1, Number(ENV.TTS_MAX_CONCURRENCY) || 6);
+let activeChatRequests = 0;
+let activeTtsRequests = 0;
 
 const MODELS = {
   yumi: {
@@ -98,11 +105,23 @@ function fallbackReply(rawText) {
 }
 
 async function readJson(request, maxLength) {
+  const declaredLength = Number(request.headers.get('Content-Length') || 0);
+  if (declaredLength > maxLength) throw new Error('REQUEST_TOO_LARGE');
   const text = await request.text();
-  if (text.length > maxLength) {
+  if (new TextEncoder().encode(text).length > maxLength) {
     throw new Error('REQUEST_TOO_LARGE');
   }
   return JSON.parse(text);
+}
+
+async function fetchWithTimeout(url, options) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), UPSTREAM_TIMEOUT_MS);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 async function handleChat(request) {
@@ -112,7 +131,7 @@ async function handleChat(request) {
 
   let body;
   try {
-    body = await readJson(request, 1e6);
+    body = await readJson(request, 64 * 1024);
   } catch (error) {
     return json(
       { error: error.message === 'REQUEST_TOO_LARGE' ? '请求体过大' : '无效的请求体' },
@@ -126,10 +145,13 @@ async function handleChat(request) {
   if (!DASHSCOPE_KEY) {
     return json({ error: '服务端未配置 DASHSCOPE_KEY' }, 500);
   }
+  if (activeChatRequests >= CHAT_MAX_CONCURRENCY) {
+    return json({ error: '服务繁忙，请稍后重试' }, 503, { 'Retry-After': '2' });
+  }
 
   const currentModel = typeof body.model === 'string' ? body.model : 'yumi';
   const safeMessages = body.messages
-    .filter((message) => message && ['user', 'assistant', 'system'].includes(message.role))
+    .filter((message) => message && ['user', 'assistant'].includes(message.role))
     .map((message) => ({
       role: message.role,
       content: String(message.content || '').slice(0, 2000),
@@ -137,8 +159,9 @@ async function handleChat(request) {
     .slice(-20);
   safeMessages.unshift({ role: 'system', content: getModel(currentModel).systemPrompt });
 
+  activeChatRequests += 1;
   try {
-    const response = await fetch(DASHSCOPE_BASE_URL, {
+    const response = await fetchWithTimeout(DASHSCOPE_BASE_URL, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -153,18 +176,22 @@ async function handleChat(request) {
     });
     const data = await response.json().catch(() => ({}));
     if (!response.ok) {
-      return json({ error: '上游接口错误', detail: data }, response.status);
+      console.error('[chat] 上游错误:', response.status);
+      return json({ error: '上游接口错误' }, response.status);
     }
 
     const content = data?.choices?.[0]?.message?.content || '';
     const parsed = parseModelJson(content);
     return json(parsed ? {
       reply: String(parsed.reply || '').slice(0, 1000),
-      mood: String(parsed.mood || 'neutral'),
-      action: String(parsed.action || 'none'),
+      mood: VALID_MOODS.has(String(parsed.mood)) ? String(parsed.mood) : 'neutral',
+      action: VALID_ACTIONS.has(String(parsed.action)) ? String(parsed.action) : 'none',
     } : fallbackReply(content));
   } catch (error) {
-    return json({ error: '调用上游失败', detail: String(error?.message || error) }, 502);
+    const timedOut = error?.name === 'AbortError' || error?.name === 'TimeoutError';
+    return json({ error: timedOut ? '上游响应超时' : '调用上游失败' }, timedOut ? 504 : 502);
+  } finally {
+    activeChatRequests -= 1;
   }
 }
 
@@ -203,14 +230,14 @@ function decodeMiniMaxAudio(value) {
 }
 
 async function handleTts(request) {
-  if (!TTS_ENABLED) return json({ enabled: false });
   if (request.method !== 'POST') {
     return new Response('Method Not Allowed', { status: 405, headers: { Allow: 'POST' } });
   }
+  if (!TTS_ENABLED) return json({ enabled: false });
 
   let body;
   try {
-    body = await readJson(request, 1e5);
+    body = await readJson(request, 16 * 1024);
   } catch (error) {
     return json(
       { error: error.message === 'REQUEST_TOO_LARGE' ? '请求体过大' : '无效的请求体' },
@@ -223,6 +250,9 @@ async function handleTts(request) {
     return new Response(null, { status: 204 });
   }
   text = text.slice(0, 500);
+  if (activeTtsRequests >= TTS_MAX_CONCURRENCY) {
+    return json({ error: '语音服务繁忙，请稍后重试' }, 503, { 'Retry-After': '2' });
+  }
 
   const separator = MINIMAX_TTS_BASE_URL.includes('?') ? '&' : '?';
   const url = MINIMAX_GROUP_ID
@@ -230,8 +260,9 @@ async function handleTts(request) {
     : MINIMAX_TTS_BASE_URL;
   const config = getModel(typeof body.model === 'string' ? body.model : 'yumi');
 
+  activeTtsRequests += 1;
   try {
-    const response = await fetch(url, {
+    const response = await fetchWithTimeout(url, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -255,12 +286,13 @@ async function handleTts(request) {
     });
     const data = await response.json().catch(() => ({}));
     if (!response.ok) {
-      return json({ error: 'MiniMax TTS 调用失败', detail: data }, response.status);
+      console.error('[tts] 上游错误:', response.status);
+      return json({ error: 'MiniMax TTS 调用失败' }, response.status);
     }
 
     const rawAudio = data?.data?.audio || data?.audio;
     if (!rawAudio) {
-      return json({ error: 'MiniMax 返回中未找到音频数据', detail: data }, 502);
+      return json({ error: 'MiniMax 返回中未找到音频数据' }, 502);
     }
 
     const audio = decodeMiniMaxAudio(rawAudio);
@@ -276,7 +308,10 @@ async function handleTts(request) {
       },
     });
   } catch (error) {
-    return json({ error: '调用 MiniMax 失败', detail: String(error?.message || error) }, 502);
+    const timedOut = error?.name === 'AbortError' || error?.name === 'TimeoutError';
+    return json({ error: timedOut ? '语音服务响应超时' : '调用 MiniMax 失败' }, timedOut ? 504 : 502);
+  } finally {
+    activeTtsRequests -= 1;
   }
 }
 

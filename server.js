@@ -3,10 +3,12 @@
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
+const zlib = require('zlib');
 const { URL } = require('url');
 
 const PUBLIC_DIR = path.join(__dirname, 'public');
-const PORT = Number(process.env.PORT) || 3000;
+const STATIC_COMPRESS_LIMIT = 1024 * 1024;
+const compressedStaticCache = new Map();
 
 // ---- 极简 .env 解析（避免引入 dotenv 依赖）----
 function loadEnv() {
@@ -28,6 +30,8 @@ function loadEnv() {
 }
 loadEnv();
 
+const PORT = Number(process.env.PORT) || 3000;
+
 const DASHSCOPE_KEY = process.env.DASHSCOPE_KEY || '';
 const DASHSCOPE_BASE_URL = process.env.DASHSCOPE_BASE_URL ||
   'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions';
@@ -44,6 +48,13 @@ const MINIMAX_TTS_SPEED = Number(process.env.MINIMAX_TTS_SPEED || 1.0);
 const MINIMAX_TTS_PITCH = Number(process.env.MINIMAX_TTS_PITCH || 0);
 
 const TTS_ENABLED = Boolean(MINIMAX_API_KEY);
+const VALID_MOODS = new Set(['happy', 'sad', 'angry', 'shy', 'surprised', 'thinking', 'neutral']);
+const VALID_ACTIONS = new Set(['wave', 'tear', 'sweat', 'none']);
+const UPSTREAM_TIMEOUT_MS = Math.max(5000, Number(process.env.UPSTREAM_TIMEOUT_MS) || 30000);
+const CHAT_MAX_CONCURRENCY = Math.max(1, Number(process.env.CHAT_MAX_CONCURRENCY) || 24);
+const TTS_MAX_CONCURRENCY = Math.max(1, Number(process.env.TTS_MAX_CONCURRENCY) || 6);
+let activeChatRequests = 0;
+let activeTtsRequests = 0;
 
 // ---- 多模型配置：不同模型有不同的人设 / 语音音色 ----
 // 前端请求 /api/chat、/api/tts 时通过 { model: 'yumi' | 'no4' } 指定当前模型。
@@ -117,22 +128,110 @@ function getMime(filePath) {
   return MIME[path.extname(filePath).toLowerCase()] || 'application/octet-stream';
 }
 
+function cacheControlFor(urlPath) {
+  if (urlPath.startsWith('/model/') || urlPath.startsWith('/vendor/')) {
+    return 'public, max-age=604800, stale-while-revalidate=86400';
+  }
+  if (/\.(?:css|js|png|jpe?g|svg|ico)$/i.test(urlPath)) {
+    return 'public, max-age=3600, stale-while-revalidate=86400';
+  }
+  return 'no-cache';
+}
+
+function securityHeaders() {
+  return {
+    'X-Content-Type-Options': 'nosniff',
+    'Referrer-Policy': 'same-origin',
+    'Permissions-Policy': 'camera=(), microphone=(), geolocation=()',
+  };
+}
+
+function chooseEncoding(req, mime, size) {
+  if (size > STATIC_COMPRESS_LIMIT || !/^(?:text\/|application\/(?:javascript|json))/.test(mime)) return '';
+  const accepted = String(req.headers['accept-encoding'] || '');
+  if (/\bbr\b/.test(accepted)) return 'br';
+  if (/\bgzip\b/.test(accepted)) return 'gzip';
+  return '';
+}
+
+function compressStatic(filePath, stat, encoding, callback) {
+  const key = `${filePath}:${stat.mtimeMs}:${stat.size}:${encoding}`;
+  const cached = compressedStaticCache.get(key);
+  if (cached) { callback(null, cached); return; }
+  fs.readFile(filePath, (readError, source) => {
+    if (readError) { callback(readError); return; }
+    const done = (error, output) => {
+      if (!error) {
+        if (compressedStaticCache.size >= 32) compressedStaticCache.clear();
+        compressedStaticCache.set(key, output);
+      }
+      callback(error, output);
+    };
+    if (encoding === 'br') {
+      zlib.brotliCompress(source, { params: { [zlib.constants.BROTLI_PARAM_QUALITY]: 4 } }, done);
+    } else {
+      zlib.gzip(source, { level: 6 }, done);
+    }
+  });
+}
+
 // ---- 静态文件托管 ----
 function serveStatic(req, res) {
-  let urlPath = decodeURIComponent(new URL(req.url, 'http://localhost').pathname);
+  if (req.method !== 'GET' && req.method !== 'HEAD') {
+    res.writeHead(405, { Allow: 'GET, HEAD', ...securityHeaders() });
+    res.end('Method Not Allowed');
+    return;
+  }
+  let urlPath;
+  try {
+    urlPath = decodeURIComponent(new URL(req.url, 'http://localhost').pathname);
+  } catch (error) {
+    res.writeHead(400, { 'Content-Type': 'text/plain; charset=utf-8', ...securityHeaders() });
+    res.end('Bad Request');
+    return;
+  }
   if (urlPath === '/') urlPath = '/index.html';
-  const filePath = path.normalize(path.join(PUBLIC_DIR, urlPath));
-  if (!filePath.startsWith(PUBLIC_DIR)) {
-    res.writeHead(403); res.end('Forbidden'); return;
+  const relativePath = urlPath.replace(/^[/\\]+/, '');
+  const filePath = path.resolve(PUBLIC_DIR, relativePath);
+  if (!filePath.startsWith(PUBLIC_DIR + path.sep)) {
+    res.writeHead(403, securityHeaders()); res.end('Forbidden'); return;
   }
   fs.stat(filePath, (err, stat) => {
     if (err || !stat.isFile()) {
-      res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
+      res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8', ...securityHeaders() });
       res.end('Not Found');
       return;
     }
-    res.writeHead(200, { 'Content-Type': getMime(filePath) });
-    fs.createReadStream(filePath).pipe(res);
+    const mime = getMime(filePath);
+    const etag = `W/"${stat.size.toString(16)}-${Math.trunc(stat.mtimeMs).toString(16)}"`;
+    const baseHeaders = {
+      'Content-Type': mime,
+      'Cache-Control': cacheControlFor(urlPath),
+      'ETag': etag,
+      'Vary': 'Accept-Encoding',
+      ...securityHeaders(),
+    };
+    if (req.headers['if-none-match'] === etag) {
+      res.writeHead(304, baseHeaders);
+      res.end();
+      return;
+    }
+    const encoding = chooseEncoding(req, mime, stat.size);
+    if (!encoding) {
+      res.writeHead(200, { ...baseHeaders, 'Content-Length': stat.size });
+      if (req.method === 'HEAD') res.end();
+      else fs.createReadStream(filePath).pipe(res);
+      return;
+    }
+    compressStatic(filePath, stat, encoding, (compressError, output) => {
+      if (compressError) {
+        res.writeHead(500, { 'Content-Type': 'text/plain; charset=utf-8', ...securityHeaders() });
+        res.end('Internal Server Error');
+        return;
+      }
+      res.writeHead(200, { ...baseHeaders, 'Content-Encoding': encoding, 'Content-Length': output.length });
+      res.end(req.method === 'HEAD' ? undefined : output);
+    });
   });
 }
 
@@ -166,8 +265,21 @@ async function handleChat(req, res) {
   if (req.method !== 'POST') { res.writeHead(405); res.end('Method Not Allowed'); return; }
 
   let body = '';
-  req.on('data', (c) => { body += c; if (body.length > 1e6) req.destroy(); });
+  let bodyBytes = 0;
+  let bodyTooLarge = false;
+  req.on('data', (c) => {
+    if (bodyTooLarge) return;
+    bodyBytes += c.length;
+    if (bodyBytes > 64 * 1024) {
+      bodyTooLarge = true;
+      res.writeHead(413, { 'Content-Type': 'application/json; charset=utf-8' });
+      res.end(JSON.stringify({ error: '请求体过大' }));
+      return;
+    }
+    body += c;
+  });
   req.on('end', async () => {
+    if (bodyTooLarge) return;
     let messages;
     let model = 'yumi';
     try {
@@ -186,7 +298,7 @@ async function handleChat(req, res) {
     }
     // 仅保留 role/content，限制长度
     const safeMessages = messages
-      .filter((m) => m && (m.role === 'user' || m.role === 'assistant' || m.role === 'system'))
+      .filter((m) => m && (m.role === 'user' || m.role === 'assistant'))
       .map((m) => ({ role: m.role, content: String(m.content || '').slice(0, 2000) }))
       .slice(-20);
     safeMessages.unshift({ role: 'system', content: getModel(model).systemPrompt });
@@ -197,6 +309,13 @@ async function handleChat(req, res) {
       return;
     }
 
+    if (activeChatRequests >= CHAT_MAX_CONCURRENCY) {
+      res.writeHead(503, { 'Content-Type': 'application/json; charset=utf-8', 'Retry-After': '2' });
+      res.end(JSON.stringify({ error: '服务繁忙，请稍后重试' }));
+      return;
+    }
+
+    activeChatRequests += 1;
     try {
       const resp = await fetch(DASHSCOPE_BASE_URL, {
         method: 'POST',
@@ -210,12 +329,14 @@ async function handleChat(req, res) {
           temperature: 0.8,
           response_format: { type: 'json_object' },
         }),
+        signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
       });
 
       const data = await resp.json().catch(() => ({}));
       if (!resp.ok) {
+        console.error('[chat] 上游错误:', resp.status, data && data.error ? data.error.message || data.error : '');
         res.writeHead(resp.status, { 'Content-Type': 'application/json; charset=utf-8' });
-        res.end(JSON.stringify({ error: '上游接口错误', detail: data }));
+        res.end(JSON.stringify({ error: '上游接口错误' }));
         return;
       }
 
@@ -224,16 +345,19 @@ async function handleChat(req, res) {
       const result = parsed
         ? {
             reply: String(parsed.reply || '').slice(0, 1000),
-            mood: String(parsed.mood || 'neutral'),
-            action: String(parsed.action || 'none'),
+            mood: VALID_MOODS.has(String(parsed.mood)) ? String(parsed.mood) : 'neutral',
+            action: VALID_ACTIONS.has(String(parsed.action)) ? String(parsed.action) : 'none',
           }
         : fallbackReply(content);
 
       res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
       res.end(JSON.stringify(result));
     } catch (e) {
-      res.writeHead(502, { 'Content-Type': 'application/json; charset=utf-8' });
-      res.end(JSON.stringify({ error: '调用上游失败', detail: String(e && e.message || e) }));
+      const timedOut = e && (e.name === 'TimeoutError' || e.name === 'AbortError');
+      res.writeHead(timedOut ? 504 : 502, { 'Content-Type': 'application/json; charset=utf-8' });
+      res.end(JSON.stringify({ error: timedOut ? '上游响应超时' : '调用上游失败' }));
+    } finally {
+      activeChatRequests -= 1;
     }
   });
 }
@@ -268,17 +392,29 @@ function looksLikeMedia(b) {
 
 // ---- /api/tts：文本 -> MiniMax 语音合成，返回音频二进制流 ----
 async function handleTts(req, res) {
+  if (req.method !== 'POST') { res.writeHead(405, { Allow: 'POST' }); res.end('Method Not Allowed'); return; }
   // 未配置 key 时直接告知前端禁用
   if (!TTS_ENABLED) {
     res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
     res.end(JSON.stringify({ enabled: false }));
     return;
   }
-  if (req.method !== 'POST') { res.writeHead(405); res.end('Method Not Allowed'); return; }
-
     let body = '';
-    req.on('data', (c) => { body += c; if (body.length > 1e5) req.destroy(); });
+    let bodyBytes = 0;
+    let bodyTooLarge = false;
+    req.on('data', (c) => {
+      if (bodyTooLarge) return;
+      bodyBytes += c.length;
+      if (bodyBytes > 16 * 1024) {
+        bodyTooLarge = true;
+        res.writeHead(413, { 'Content-Type': 'application/json; charset=utf-8' });
+        res.end(JSON.stringify({ error: '请求体过大' }));
+        return;
+      }
+      body += c;
+    });
     req.on('end', async () => {
+      if (bodyTooLarge) return;
       let text = '';
       let model = 'yumi';
       try {
@@ -294,12 +430,19 @@ async function handleTts(req, res) {
     // 限制长度，避免超长
     text = text.slice(0, 500);
 
+    if (activeTtsRequests >= TTS_MAX_CONCURRENCY) {
+      res.writeHead(503, { 'Content-Type': 'application/json; charset=utf-8', 'Retry-After': '2' });
+      res.end(JSON.stringify({ error: '语音服务繁忙，请稍后重试' }));
+      return;
+    }
+
     // 拼接 GroupId（可选，留空则不传）
     const sep = MINIMAX_TTS_BASE_URL.includes('?') ? '&' : '?';
     const url = MINIMAX_GROUP_ID
       ? `${MINIMAX_TTS_BASE_URL}${sep}GroupId=${encodeURIComponent(MINIMAX_GROUP_ID)}`
       : MINIMAX_TTS_BASE_URL;
 
+      activeTtsRequests += 1;
       try {
         const cfg = getModel(model);
         const resp = await fetch(url, {
@@ -323,12 +466,14 @@ async function handleTts(req, res) {
             format: 'mp3',
           },
         }),
+        signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
       });
 
       const data = await resp.json().catch(() => ({}));
       if (!resp.ok) {
+        console.error('[tts] 上游错误:', resp.status, data && data.base_resp ? data.base_resp.status_msg : '');
         res.writeHead(resp.status, { 'Content-Type': 'application/json; charset=utf-8' });
-        res.end(JSON.stringify({ error: 'MiniMax TTS 调用失败', detail: data }));
+        res.end(JSON.stringify({ error: 'MiniMax TTS 调用失败' }));
         return;
       }
 
@@ -353,25 +498,39 @@ async function handleTts(req, res) {
       });
       res.end(audioBuffer);
     } catch (e) {
-      res.writeHead(502, { 'Content-Type': 'application/json; charset=utf-8' });
-      res.end(JSON.stringify({ error: '调用 MiniMax 失败', detail: String(e && e.message || e) }));
+      const timedOut = e && (e.name === 'TimeoutError' || e.name === 'AbortError');
+      res.writeHead(timedOut ? 504 : 502, { 'Content-Type': 'application/json; charset=utf-8' });
+      res.end(JSON.stringify({ error: timedOut ? '语音服务响应超时' : '调用 MiniMax 失败' }));
+    } finally {
+      activeTtsRequests -= 1;
     }
   });
 }
 
-const server = http.createServer((req, res) => {
-  const pathname = new URL(req.url, 'http://localhost').pathname;
-  if (pathname === '/api/chat') {
-    handleChat(req, res);
-  } else if (pathname === '/api/tts') {
-    handleTts(req, res);
-  } else if (pathname === '/api/tts/status') {
-    handleTtsStatus(req, res);
-  } else {
-    serveStatic(req, res);
-  }
-});
+function createAppServer() {
+  const server = http.createServer((req, res) => {
+    const pathname = new URL(req.url, 'http://localhost').pathname;
+    if (pathname === '/api/chat') {
+      handleChat(req, res);
+    } else if (pathname === '/api/tts') {
+      handleTts(req, res);
+    } else if (pathname === '/api/tts/status') {
+      handleTtsStatus(req, res);
+    } else {
+      serveStatic(req, res);
+    }
+  });
 
-server.listen(PORT, () => {
-  console.log(`✨ Yumi 聊天网站已启动： http://localhost:${PORT}`);
-});
+  server.requestTimeout = 40000;
+  server.headersTimeout = 10000;
+  server.keepAliveTimeout = 5000;
+  return server;
+}
+
+if (require.main === module) {
+  createAppServer().listen(PORT, () => {
+    console.log(`✨ Yumi 聊天网站已启动： http://localhost:${PORT}`);
+  });
+}
+
+module.exports = { createAppServer, parseModelJson, fallbackReply, getMime };

@@ -2,12 +2,15 @@
   "name": "yumi-live2d-chat",
   "version": "1.0.0",
   "private": true,
+  "license": "Apache-2.0",
   "description": "少女风 Live2D 聊天网站（yumi 模型 + 阿里云百炼 Qwen）",
   "engines": {
     "node": "20"
   },
   "scripts": {
     "build:esa": "node build-esa-env.cjs",
-    "start": "node server.js"
+    "start": "node server.js",
+    "check": "node --check server.js && node --check esa-function.js && node --check public/js/app.js && node --check public/js/live2d.js && node --test",
+    "test": "node --test"
   }
 }

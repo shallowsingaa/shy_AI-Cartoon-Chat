@@ -9,6 +9,9 @@
   const form = document.getElementById('chat-form');
   const input = document.getElementById('user-input');
   const typing = document.getElementById('typing');
+  const submitButton = form.querySelector('button[type="submit"]');
+  const IS_MOBILE = window.matchMedia('(max-width: 768px), (pointer: coarse)').matches;
+  const HISTORY_LIMIT = 40;
 
   // 每个模型独立的聊天记录（按模型 id 分别存储）
   function histKey(id) { return 'chat_history_' + id; }
@@ -26,27 +29,44 @@
   // 取得当前模型的对话数组（惰性从 sessionStorage 加载一次）
   function currentHistory() {
     if (!histories[currentId]) {
-      try { histories[currentId] = JSON.parse(sessionStorage.getItem(histKey(currentId)) || '[]'); }
+      try {
+        const stored = JSON.parse(sessionStorage.getItem(histKey(currentId)) || '[]');
+        histories[currentId] = Array.isArray(stored)
+          ? stored.filter(function (item) {
+              return item && (item.role === 'user' || item.role === 'assistant') && typeof item.content === 'string';
+            }).slice(-HISTORY_LIMIT)
+          : [];
+      }
       catch (e) { histories[currentId] = []; }
     }
     return histories[currentId];
   }
   function saveHistory() {
-    try { sessionStorage.setItem(histKey(currentId), JSON.stringify(currentHistory())); } catch (e) {}
+    const items = currentHistory();
+    if (items.length > HISTORY_LIMIT) items.splice(0, items.length - HISTORY_LIMIT);
+    try { sessionStorage.setItem(histKey(currentId), JSON.stringify(items)); } catch (e) {}
   }
   let history = currentHistory();
 
   // ===== 空闲主动搭话相关状态 =====
-  const IDLE_TIMEOUT = 60000;
-  const PROACTIVE_MAX = 3;
+  const IDLE_TIMEOUT = 90000;
+  const PROACTIVE_MAX = 1;
   let lastActive = Date.now();
   let proactiveCount = 0;
   let proactiveBusy = false;
 
   // ===== 语音朗读相关状态 =====
-  let ttsEnabled = true;
+  let ttsEnabled = !IS_MOBILE;
+  try {
+    const savedTts = localStorage.getItem('yumi_tts_enabled');
+    if (savedTts !== null) ttsEnabled = savedTts === '1';
+  } catch (e) { /* 忽略存储限制 */ }
   let currentAudio = null;
   let ttsToggleBtn = null;
+  let ttsAvailable = false;
+  let ttsController = null;
+  let chatController = null;
+  let sending = false;
 
   function markActive() { lastActive = Date.now(); }
   function scrollBottom() { messagesEl.scrollTop = messagesEl.scrollHeight; }
@@ -66,9 +86,37 @@
   function showTyping() { typing.classList.remove('hidden'); scrollBottom(); }
   function hideTyping() { typing.classList.add('hidden'); }
 
+  function setSending(value) {
+    sending = value;
+    input.disabled = value;
+    submitButton.disabled = value;
+    submitButton.textContent = value ? '发送中' : '发送';
+  }
+
+  async function requestChat(payload, modelId) {
+    if (chatController) chatController.abort();
+    const controller = new AbortController();
+    chatController = controller;
+    const timer = setTimeout(function () { controller.abort(); }, 35000);
+    try {
+      const res = await fetch('/api/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ messages: payload, model: modelId }),
+        signal: controller.signal,
+      });
+      const data = await res.json().catch(function () { return {}; });
+      if (!res.ok) throw new Error(data.error || ('请求失败（' + res.status + '）'));
+      return data;
+    } finally {
+      clearTimeout(timer);
+      if (chatController === controller) chatController = null;
+    }
+  }
+
   async function send(rawText) {
     const text = (rawText || '').trim();
-    if (!text) return;
+    if (!text || sending) return;
 
     addMessage('user', text);
     history.push({ role: 'user', content: text });
@@ -76,14 +124,10 @@
     proactiveCount = 0;
     input.value = '';
     showTyping();
+    setSending(true);
 
     try {
-      const res = await fetch('/api/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ messages: history, model: getModelId() }),
-      });
-      const data = await res.json();
+      const data = await requestChat(history, getModelId());
       hideTyping();
       markActive();
 
@@ -95,7 +139,12 @@
       triggerExpression(data.mood, data.action, reply);
     } catch (e) {
       hideTyping();
-      addMessage('assistant', '哎呀，我好像和网络走散了…稍后再试试好不好？(´･_･`)');
+      if (e && e.name !== 'AbortError') {
+        addMessage('assistant', '哎呀，我好像和网络走散了…稍后再试试好不好？(´･_･`)');
+      }
+    } finally {
+      setSending(false);
+      input.focus();
     }
   }
 
@@ -117,12 +166,17 @@
       try { currentAudio.pause(); } catch (e) { /* ignore */ }
       currentAudio = null;
     }
+    if (ttsController) ttsController.abort();
+    const controller = new AbortController();
+    ttsController = controller;
+    const timer = setTimeout(function () { controller.abort(); }, 35000);
 
     try {
       const res = await fetch('/api/tts', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ text: plain, model: getModelId() }),
+        signal: controller.signal,
       });
       if (!res.ok) return;
       const ct = res.headers.get('Content-Type') || '';
@@ -154,18 +208,26 @@
       });
     } catch (e) {
       if (api() && api().stopLipSync) api().stopLipSync();
+    } finally {
+      clearTimeout(timer);
+      if (ttsController === controller) ttsController = null;
     }
   }
 
-  function setTtsEnabled(on) {
+  function setTtsEnabled(on, persist) {
     ttsEnabled = on;
+    if (persist !== false) {
+      try { localStorage.setItem('yumi_tts_enabled', on ? '1' : '0'); } catch (e) { /* ignore */ }
+    }
     if (!on && currentAudio) {
       try { currentAudio.pause(); } catch (e) { /* ignore */ }
       currentAudio = null;
     }
+    if (!on && ttsController) ttsController.abort();
     if (ttsToggleBtn) {
       ttsToggleBtn.textContent = on ? '🔊' : '🔇';
       ttsToggleBtn.title = on ? '语音朗读：开（点击关闭）' : '语音朗读：关（点击开启）';
+      ttsToggleBtn.setAttribute('aria-pressed', on ? 'true' : 'false');
       ttsToggleBtn.classList.toggle('muted', !on);
     }
   }
@@ -250,7 +312,9 @@
   // ===== 语音朗读开关 =====
   ttsToggleBtn = document.getElementById('tts-toggle');
   if (ttsToggleBtn) {
-    ttsToggleBtn.addEventListener('click', function () { setTtsEnabled(!ttsEnabled); });
+    ttsToggleBtn.addEventListener('click', function () {
+      if (ttsAvailable) setTtsEnabled(!ttsEnabled);
+    });
   }
 
   // ===== 发型切换 =====
@@ -389,6 +453,10 @@
       if (!b) return;
       const id = b.getAttribute('data-model');
       if (id === getModelId()) return;
+      if (chatController) chatController.abort();
+      if (ttsController) ttsController.abort();
+      setSending(false);
+      hideTyping();
       // 切换前保存当前角色的对话（已按各自 id 存储，这里确保一次落盘）
       saveHistory();
       // 先切换底层模型配置（setModel 会同步把 currentConfig 切到目标角色并立即换主题），
@@ -461,8 +529,12 @@
 
   // 询问后端是否配置了 MiniMax
   fetch('/api/tts/status').then(function (r) { return r.json(); }).then(function (s) {
-    setTtsEnabled(!!s.enabled);
-    if (!s.enabled && ttsToggleBtn) ttsToggleBtn.classList.add('disabled');
+    ttsAvailable = !!s.enabled;
+    setTtsEnabled(ttsAvailable && ttsEnabled, false);
+    if (ttsToggleBtn) {
+      ttsToggleBtn.disabled = !ttsAvailable;
+      ttsToggleBtn.classList.toggle('disabled', !ttsAvailable);
+    }
   }).catch(function () { /* 忽略 */ });
 
   // ===== 左侧人物位置调节 =====
@@ -510,12 +582,7 @@
     const payload = history.concat([{ role: 'user', content: promptMsg }]);
     showTyping();
     try {
-      const res = await fetch('/api/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ messages: payload, model: getModelId() }),
-      });
-      const data = await res.json();
+      const data = await requestChat(payload, getModelId());
       hideTyping();
       const reply = data.reply || '诶？你还在吗～';
       addMessage('assistant', reply);
@@ -546,5 +613,5 @@
     proactiveCount += 1;
     markActive();
     proactiveChat().finally(function () { proactiveBusy = false; });
-  }, 5000);
+  }, 15000);
 })();
