@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Yumi 的小窝 · 少女风 Live2D 聊天</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/css/style.css" />
+</head>
+<body>
+  <div class="app">
+    <!-- 左侧：Live2D 模型区 -->
+    <section class="model-panel">
+      <div class="decor-layer" aria-hidden="true">
+        <!-- 云朵 -->
+        <svg class="decor cloud c1" viewBox="0 0 120 70"><path d="M30 55a18 18 0 0 1 1-35 22 22 0 0 1 41 6 16 16 0 0 1 3 30z" fill="#ffffff" opacity="0.9"/></svg>
+        <svg class="decor cloud c2" viewBox="0 0 120 70"><path d="M30 55a18 18 0 0 1 1-35 22 22 0 0 1 41 6 16 16 0 0 1 3 30z" fill="#ffffff" opacity="0.85"/></svg>
+        <svg class="decor cloud c3" viewBox="0 0 120 70"><path d="M30 55a18 18 0 0 1 1-35 22 22 0 0 1 41 6 16 16 0 0 1 3 30z" fill="#ffffff" opacity="0.8"/></svg>
+        <!-- 蝴蝶结 -->
+        <svg class="decor bow b1" viewBox="0 0 100 70"><path d="M50 35 L12 12 Q4 35 12 58 Z" fill="#F7A8B8"/><path d="M50 35 L88 12 Q96 35 88 58 Z" fill="#F7A8B8"/><circle cx="50" cy="35" r="11" fill="#F4829B"/></svg>
+        <svg class="decor bow b2" viewBox="0 0 100 70"><path d="M50 35 L12 12 Q4 35 12 58 Z" fill="#AEC6E8"/><path d="M50 35 L88 12 Q96 35 88 58 Z" fill="#AEC6E8"/><circle cx="50" cy="35" r="11" fill="#8FB3DE"/></svg>
+        <svg class="decor bow b3" viewBox="0 0 100 70"><path d="M50 35 L12 12 Q4 35 12 58 Z" fill="#FFE0A3"/><path d="M50 35 L88 12 Q96 35 88 58 Z" fill="#FFE0A3"/><circle cx="50" cy="35" r="11" fill="#F4C96B"/></svg>
+        <!-- 星星点缀 -->
+        <span class="decor star s1">✦</span>
+        <span class="decor star s2">✧</span>
+        <span class="decor star s3">✦</span>
+      </div>
+
+      <!-- 诺亚专属装饰层：电流 + 蓝色爱心（仅诺亚主题显示） -->
+      <div class="decor-layer decor-layer-no4" aria-hidden="true">
+        <svg class="decor bolt bolt1" viewBox="0 0 100 120">
+          <defs><linearGradient id="boltGrad" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0" stop-color="#aee9ff"/><stop offset="1" stop-color="#4f8cff"/>
+          </linearGradient></defs>
+          <path d="M58 4 L22 66 L46 66 L36 116 L84 46 L56 46 Z" fill="url(#boltGrad)"/>
+        </svg>
+        <svg class="decor bolt bolt2" viewBox="0 0 100 120">
+          <path d="M58 4 L22 66 L46 66 L36 116 L84 46 L56 46 Z" fill="url(#boltGrad)"/>
+        </svg>
+        <svg class="decor bolt bolt3" viewBox="0 0 100 120">
+          <path d="M58 4 L22 66 L46 66 L36 116 L84 46 L56 46 Z" fill="url(#boltGrad)"/>
+        </svg>
+        <svg class="decor bolt bolt4" viewBox="0 0 100 120">
+          <path d="M58 4 L22 66 L46 66 L36 116 L84 46 L56 46 Z" fill="url(#boltGrad)"/>
+        </svg>
+
+        <svg class="decor heart heart1" viewBox="0 0 32 29.6">
+          <defs><linearGradient id="heartGrad" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0" stop-color="#8fd0ff"/><stop offset="1" stop-color="#5b7cff"/>
+          </linearGradient></defs>
+          <path d="M23.6,0c-3.4,0-6.3,2.7-7.6,5.6C14.7,2.7,11.8,0,8.4,0C3.8,0,0,3.8,0,8.4c0,9.4,9.5,11.9,16,21.2c6.1-9.3,16-12.1,16-21.2C32,3.8,28.2,0,23.6,0z" fill="url(#heartGrad)"/>
+        </svg>
+        <svg class="decor heart heart2" viewBox="0 0 32 29.6"><path d="M23.6,0c-3.4,0-6.3,2.7-7.6,5.6C14.7,2.7,11.8,0,8.4,0C3.8,0,0,3.8,0,8.4c0,9.4,9.5,11.9,16,21.2c6.1-9.3,16-12.1,16-21.2C32,3.8,28.2,0,23.6,0z" fill="url(#heartGrad)"/></svg>
+        <svg class="decor heart heart3" viewBox="0 0 32 29.6"><path d="M23.6,0c-3.4,0-6.3,2.7-7.6,5.6C14.7,2.7,11.8,0,8.4,0C3.8,0,0,3.8,0,8.4c0,9.4,9.5,11.9,16,21.2c6.1-9.3,16-12.1,16-21.2C32,3.8,28.2,0,23.6,0z" fill="url(#heartGrad)"/></svg>
+        <svg class="decor heart heart4" viewBox="0 0 32 29.6"><path d="M23.6,0c-3.4,0-6.3,2.7-7.6,5.6C14.7,2.7,11.8,0,8.4,0C3.8,0,0,3.8,0,8.4c0,9.4,9.5,11.9,16,21.2c6.1-9.3,16-12.1,16-21.2C32,3.8,28.2,0,23.6,0z" fill="url(#heartGrad)"/></svg>
+        <svg class="decor heart heart5" viewBox="0 0 32 29.6"><path d="M23.6,0c-3.4,0-6.3,2.7-7.6,5.6C14.7,2.7,11.8,0,8.4,0C3.8,0,0,3.8,0,8.4c0,9.4,9.5,11.9,16,21.2c6.1-9.3,16-12.1,16-21.2C32,3.8,28.2,0,23.6,0z" fill="url(#heartGrad)"/></svg>
+      </div>
+
+      <div class="model-glow" aria-hidden="true"></div>
+      <div id="live2d-canvas" class="live2d-canvas">
+        <div class="model-loading">Yumi 正在登场… ☁</div>
+      </div>
+
+      <!-- 人物位置调节 -->
+      <div class="model-ctrl" id="model-ctrl">
+        <button class="mc-fab" id="mc-fab" type="button" title="调整人物位置" aria-label="调整人物位置">⚙️</button>
+        <div class="mc-pop" id="mc-pop" hidden>
+          <div class="mc-title">调整人物位置</div>
+          <div class="mc-row">
+            <span class="mc-label">左右</span>
+            <input type="range" id="pos-x" min="-250" max="250" value="0" />
+          </div>
+          <div class="mc-row">
+            <span class="mc-label">上下</span>
+            <input type="range" id="pos-y" min="-500" max="500" value="0" />
+          </div>
+          <div class="mc-row">
+            <span class="mc-label">大小</span>
+            <input type="range" id="pos-scale" min="0.1" max="3" step="0.01" value="1" />
+          </div>
+          <button class="mc-reset" id="pos-reset" type="button">重置位置</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- 右侧：对话面板 -->
+    <section class="chat-panel">
+      <header class="chat-header">
+        <span class="header-bow" id="header-bow">🎀</span>
+        <div class="model-switch" id="model-switch">
+          <button type="button" class="model-switch-btn" data-model="yumi">🩷 Yumi</button>
+          <button type="button" class="model-switch-btn" data-model="no4">💙 诺亚</button>
+        </div>
+        <h1 id="chat-title">Yumi 的小窝</h1>
+        <span id="chat-sub" class="header-sub">和软软的少女说说话吧～</span>
+        <button id="tts-toggle" class="tts-toggle" type="button" title="语音朗读：开（点击关闭）" aria-label="语音朗读开关">🔊</button>
+        <button id="hair-toggle" class="hair-toggle" type="button" title="切换发型" aria-label="切换发型">💇</button>
+        <button id="face-toggle" class="face-toggle" type="button" title="切换表情" aria-label="切换表情">🎭</button>
+        <button id="act-toggle" class="act-toggle" type="button" title="切换动作" aria-label="切换动作">💃</button>
+        <div id="hair-panel" class="hair-panel" hidden>
+          <div class="hair-panel-title">Yumi 的发型</div>
+          <button class="hair-item" type="button" data-hair="long">💛 长发</button>
+          <button class="hair-item" type="button" data-hair="short1">🤍 短发1</button>
+          <button class="hair-item" type="button" data-hair="short2">🖤 短发2</button>
+        </div>
+        <div id="face-panel" class="face-panel" hidden>
+          <div class="face-panel-title">Yumi 的表情</div>
+          <div class="face-group">
+            <div class="face-group-label">嘴巴</div>
+            <button class="face-item" type="button" data-cat="mouth" data-key="null">😌 默认</button>
+            <button class="face-item" type="button" data-cat="mouth" data-key="tongue">👅 吐舌头</button>
+            <button class="face-item" type="button" data-cat="mouth" data-key="crooked">😏 歪嘴</button>
+            <button class="face-item" type="button" data-cat="mouth" data-key="cat">😺 猫猫嘴</button>
+          </div>
+          <div class="face-group">
+            <div class="face-group-label">眼睛</div>
+            <button class="face-item" type="button" data-cat="eyes" data-key="null">😊 默认</button>
+            <button class="face-item" type="button" data-cat="eyes" data-key="star">⭐ 星星眼</button>
+            <button class="face-item" type="button" data-cat="eyes" data-key="mosquito">💫 蚊香眼</button>
+            <button class="face-item" type="button" data-cat="eyes" data-key="heart">💗 爱心眼</button>
+            <button class="face-item" type="button" data-cat="eyes" data-key="teary">💧 泪汪汪</button>
+          </div>
+          <div class="face-group">
+            <div class="face-group-label">装饰（可多选）</div>
+            <button class="face-item" type="button" data-cat="deco" data-key="eyepatch">🩹 眼罩</button>
+            <button class="face-item" type="button" data-cat="deco" data-key="dog">🐶 小狗</button>
+            <button class="face-item" type="button" data-cat="deco" data-key="tears">💦 眼泪</button>
+            <button class="face-item" type="button" data-cat="deco" data-key="black">⚫ 黑脸</button>
+          </div>
+        </div>
+        <div id="act-panel" class="act-panel" hidden>
+          <div class="act-panel-title">Yumi 的动作</div>
+          <button class="act-item" type="button" data-act="sway" data-type="toggle">💃 随节奏摇摆</button>
+          <button class="act-item" type="button" data-act="wave" data-type="play">👋 挥手</button>
+          <button class="act-item" type="button" data-act="tear" data-type="play">😭 流泪</button>
+          <button class="act-item" type="button" data-act="sweat" data-type="play">😅 流汗</button>
+          <div class="act-hint">※ 流泪需装备眼泪（表情-装饰-💦眼泪）</div>
+        </div>
+      </header>
+
+      <div id="messages" class="messages">
+        <!-- 消息气泡由 JS 渲染 -->
+      </div>
+
+      <div id="typing" class="typing hidden">
+        <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+        <span class="typing-label" id="typing-label">Yumi 正在思考…</span>
+      </div>
+
+      <div class="emoji-bar" id="emoji-bar" aria-label="表情快捷栏">
+        <button type="button" class="emoji-btn">😊</button>
+        <button type="button" class="emoji-btn">🥰</button>
+        <button type="button" class="emoji-btn">😢</button>
+        <button type="button" class="emoji-btn">😠</button>
+        <button type="button" class="emoji-btn">😮</button>
+        <button type="button" class="emoji-btn">🤔</button>
+        <button type="button" class="emoji-btn">👋</button>
+        <button type="button" class="emoji-btn">💕</button>
+        <button type="button" class="emoji-btn">✨</button>
+        <button type="button" class="emoji-btn">🌸</button>
+      </div>
+
+      <form id="chat-form" class="chat-form" autocomplete="off">
+        <input id="user-input" class="user-input" type="text" placeholder="说点什么吧，Yumi 在听哦～" maxlength="500" />
+        <button type="submit" class="send-btn">发送</button>
+      </form>
+    </section>
+  </div>
+
+  <!-- Live2D 依赖（顺序重要）-->
+  <script src="https://cdn.jsdelivr.net/npm/pixi.js@6.5.2/dist/browser/pixi.min.js"></script>
+  <script src="https://cubism.live2d.com/sdk-web/cubismcore/live2dcubismcore.min.js"></script>
+  <!-- 仅加载 Cubism 4 构建（兼容 Cubism 3 模型），避免 index 构建中 Cubism 2 加载器的初始化冲突 -->
+  <script src="https://cdn.jsdelivr.net/npm/pixi-live2d-display@0.4.0/dist/cubism4.min.js"></script>
+  <!-- 项目脚本 -->
+  <script src="/js/live2d.js"></script>
+  <script src="/js/app.js"></script>
+</body>
+</html>
