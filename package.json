@@ -7,6 +7,7 @@
     "node": "20"
   },
   "scripts": {
+    "build:esa": "node build-esa-env.cjs",
     "start": "node server.js"
   }
 }

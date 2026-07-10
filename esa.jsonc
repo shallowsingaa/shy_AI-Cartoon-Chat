@@ -1,7 +1,7 @@
 {
   "name": "yumi-live2d-chat",
   "installCommand": "",
-  "buildCommand": "",
+  "buildCommand": "node build-esa-env.cjs",
   "entry": "./esa-function.js",
   "assets": {
     "directory": "./public"

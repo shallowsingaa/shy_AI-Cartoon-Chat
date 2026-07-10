@@ -5,22 +5,22 @@
  * 请求（主要是 /api/*）才会进入这里。
  */
 
-// ESA 支持 process API，但不会像完整 Node.js 一样把 process 注入全局作用域。
-import process from 'node:process';
+// ESA 控制台环境变量只在构建阶段存在，由 build-esa-env.cjs 生成此模块。
+import ENV from './esa-env.generated.js';
 
-const DASHSCOPE_KEY = process.env.DASHSCOPE_KEY || '';
-const DASHSCOPE_BASE_URL = process.env.DASHSCOPE_BASE_URL ||
+const DASHSCOPE_KEY = ENV.DASHSCOPE_KEY || '';
+const DASHSCOPE_BASE_URL = ENV.DASHSCOPE_BASE_URL ||
   'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions';
-const MODEL = process.env.MODEL || 'qwen-plus';
+const MODEL = ENV.MODEL || 'qwen-plus';
 
-const MINIMAX_API_KEY = process.env.MINIMAX_API_KEY || '';
-const MINIMAX_GROUP_ID = process.env.MINIMAX_GROUP_ID || '';
-const MINIMAX_TTS_BASE_URL = process.env.MINIMAX_TTS_BASE_URL ||
+const MINIMAX_API_KEY = ENV.MINIMAX_API_KEY || '';
+const MINIMAX_GROUP_ID = ENV.MINIMAX_GROUP_ID || '';
+const MINIMAX_TTS_BASE_URL = ENV.MINIMAX_TTS_BASE_URL ||
   'https://api.minimax.chat/v1/t2a_v2';
-const MINIMAX_TTS_MODEL = process.env.MINIMAX_TTS_MODEL || 'speech-02-turbo';
-const MINIMAX_VOICE_ID = process.env.MINIMAX_VOICE_ID || 'female-tianmei';
-const MINIMAX_TTS_SPEED = Number(process.env.MINIMAX_TTS_SPEED || 1.0);
-const MINIMAX_TTS_PITCH = Number(process.env.MINIMAX_TTS_PITCH || 0);
+const MINIMAX_TTS_MODEL = ENV.MINIMAX_TTS_MODEL || 'speech-02-turbo';
+const MINIMAX_VOICE_ID = ENV.MINIMAX_VOICE_ID || 'female-tianmei';
+const MINIMAX_TTS_SPEED = Number(ENV.MINIMAX_TTS_SPEED || 1.0);
+const MINIMAX_TTS_PITCH = Number(ENV.MINIMAX_TTS_PITCH || 0);
 const TTS_ENABLED = Boolean(MINIMAX_API_KEY);
 
 const MODELS = {
@@ -39,9 +39,9 @@ const MODELS = {
     ].join('\n'),
   },
   no4: {
-    voiceId: process.env.MINIMAX_VOICE_ID_NO4 || 'male-qn-qingse-jingpin',
-    voiceSpeed: Number(process.env.MINIMAX_TTS_SPEED_NO4 || 1.05),
-    voicePitch: Number(process.env.MINIMAX_TTS_PITCH_NO4 || 2),
+    voiceId: ENV.MINIMAX_VOICE_ID_NO4 || 'male-qn-qingse-jingpin',
+    voiceSpeed: Number(ENV.MINIMAX_TTS_SPEED_NO4 || 1.05),
+    voicePitch: Number(ENV.MINIMAX_TTS_PITCH_NO4 || 2),
     systemPrompt: [
       '你是「诺亚」，一个少年的虚拟主播，外表是少年感正太，说话风格又酷又有点拽，简短直接、不啰嗦，偶尔带点冷幽默。',
       '你不会撒娇卖萌，也少用感叹号；语气像青春期酷酷的男生，但内心其实并不坏。',
