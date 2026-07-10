@@ -103,6 +103,21 @@ npm start
 
 > 修改 `.env` 后需要重启服务才会生效。
 
+### 部署到阿里云 ESA Pages
+
+仓库根目录包含 `esa.jsonc`，从 Git 仓库创建 Pages 时会自动使用以下配置：
+
+- 安装命令、构建命令：留空（项目零依赖且无需构建）
+- 根目录：`/`
+- 静态资源目录：`./public`
+- 函数文件路径：`./esa-function.js`
+- Node.js 版本：`20`
+
+在 ESA 控制台配置环境变量，至少需要填写 `DASHSCOPE_KEY`。如需语音功能，再填写
+`MINIMAX_API_KEY` 及相关 MiniMax 配置。ESA 不需要 `PORT`，也不会读取本地 `.env` 文件。
+
+`server.js` 仍用于本地 Node.js 开发；`esa-function.js` 是 ESA 边缘运行时专用入口。
+
 ---
 
 ## 🔑 环境变量说明
